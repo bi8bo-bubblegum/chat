@@ -56,6 +56,7 @@ async def delete_knowledge_base(db: AsyncSession, user_id: str, kb_id: str):
     await kb_repo.delete_knowledge_base(db, kb)
 
 async def upload_document(db: AsyncSession, user_id: str, kb_id: str, filename: str, file_content: bytes) -> Document:
+    """上传文档：保存到 COS 并创建记录后立即返回，后台异步处理"""
     kb = await kb_repo.get_knowledge_base_by_id(db, kb_id)
     if not kb:
         raise NotFoundException(message=f"知识库 {kb_id} 不存在")
@@ -64,11 +65,10 @@ async def upload_document(db: AsyncSession, user_id: str, kb_id: str, filename: 
     doc_id = uuid4()
     object_key = f'{user_id}/{doc_id}.pdf'
 
-    # 上传到腾讯云 COS
     upload_file(object_key, file_content)
 
     doc = Document(
-        id = doc_id,
+        id=doc_id,
         filename=filename,
         file_path=object_key,
         file_size=len(file_content),
@@ -76,46 +76,58 @@ async def upload_document(db: AsyncSession, user_id: str, kb_id: str, filename: 
         knowledge_base_id=UUID(kb_id)
     )
     doc = await kb_repo.create_document(db, doc)
-    doc_id_str = str(doc.id)
-    try:
-        await kb_repo.update_document_status(db, doc_id_str, 'processing')
 
-        # 解析PDF
-        text = _extract_text_from_pdf_bytes(file_content)
-        if not text.strip():
-            await kb_repo.update_document_status(db, doc_id_str, 'failed')
-            return doc
+    # 后台异步处理 PDF（解析、分块、向量化）
+    asyncio.create_task(_process_document_background(doc_id, UUID(kb_id), file_content))
 
-        # 分块
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=settings.CHUNK_SIZE,
-            chunk_overlap=settings.CHUNK_OVERLAP,
-            separators=["\n\n", "\n", "。", "！", "？", ".", " ", ""]
-        )
-        chunks_text = splitter.split_text(text)
-
-        #向量化
-        chunk_embeddings = await embeddings.aembed_documents(chunks_text)
-
-        #保存分块
-        chunks = []
-        for i, (content, embedding) in enumerate(zip(chunks_text, chunk_embeddings)):
-            chunk = DocumentChunk(
-                content=content,
-                chunk_index=i,
-                embedding=embedding,
-                document_id=doc.id,
-                knowledge_base_id=kb.id,
-            )
-            chunks.append(chunk)
-        await kb_repo.insert_chunks(db, chunks)
-
-        # 更新状态
-        await kb_repo.update_document_status(db, doc_id_str, 'completed', len(chunks))
-    except Exception as e:
-        logging.error(f"Document processing error: {e}", exc_info=True)
-        await kb_repo.update_document_status(db, doc_id_str, 'failed')
     return doc
+
+
+async def _process_document_background(doc_id: UUID , kb_id: UUID, file_content: bytes):
+    """后台处理 PDF：解析 → 分块 → 向量化 → 更新状态"""
+    doc_id_str = str(doc_id)
+    async with async_session_factory() as db:
+        try:
+            await kb_repo.update_document_status(db, doc_id_str, 'processing')
+            await db.commit()
+
+            text = _extract_text_from_pdf_bytes(file_content)
+            if not text.strip():
+                await kb_repo.update_document_status(db, doc_id_str, 'failed')
+                await db.commit()
+                return
+
+            splitter = RecursiveCharacterTextSplitter(
+                chunk_size=settings.CHUNK_SIZE,
+                chunk_overlap=settings.CHUNK_OVERLAP,
+                separators=["\n\n", "\n", "。", "！", "？", ".", " ", ""]
+            )
+            chunks_text = splitter.split_text(text)
+
+            chunk_embeddings = await embeddings.aembed_documents(chunks_text)
+
+            chunks = []
+            for i, (content, embedding) in enumerate(zip(chunks_text, chunk_embeddings)):
+                chunk = DocumentChunk(
+                    content=content,
+                    chunk_index=i,
+                    embedding=embedding,
+                    document_id=doc_id,
+                    knowledge_base_id=kb_id,
+                )
+                chunks.append(chunk)
+            await kb_repo.insert_chunks(db, chunks)
+
+            await kb_repo.update_document_status(db, doc_id_str, 'completed', len(chunks))
+            await db.commit()
+        except Exception as e:
+            await db.rollback()
+            logging.error(f"Background document processing error: {e}", exc_info=True)
+            try:
+                await kb_repo.update_document_status(db, doc_id_str, 'failed')
+                await db.commit()
+            except Exception:
+                pass
 
 
 def _extract_text_from_pdf_bytes(file_bytes: bytes) -> str:
