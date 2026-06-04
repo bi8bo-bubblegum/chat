@@ -15,6 +15,16 @@ import {
   XCircle,
 } from "lucide-react";
 
+function generateId(): string {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
+  });
+}
+
 export default function ChatPage() {
   const { user, logout, checkAuth } = useAuth();
   const navigate = useNavigate();
@@ -150,7 +160,7 @@ export default function ChatPage() {
     const streamConvId = activeId;
 
     const userMsg: Message = {
-      id: crypto.randomUUID(),
+      id: generateId(),
       conversation_id: streamConvId,
       role: "user",
       content: text,
@@ -174,7 +184,7 @@ export default function ChatPage() {
           setToolStatus({ name: event.name, loading: false });
         } else if (event.type === "done") {
           const assistantMsg: Message = {
-            id: crypto.randomUUID(),
+            id: generateId(),
             conversation_id: streamConvId,
             role: "assistant",
             content: full,
@@ -195,7 +205,7 @@ export default function ChatPage() {
       const errMsg = err instanceof Error ? err.message : "未知错误";
       if (streamText) {
         const assistantMsg: Message = {
-          id: crypto.randomUUID(),
+          id: generateId(),
           conversation_id: streamConvId,
           role: "assistant",
           content: streamText,
@@ -205,7 +215,7 @@ export default function ChatPage() {
         setStreamText("");
       }
       const errorMsg: Message = {
-        id: crypto.randomUUID(),
+        id: generateId(),
         conversation_id: streamConvId,
         role: "assistant",
         content: `⚠️ ${errMsg}`,
