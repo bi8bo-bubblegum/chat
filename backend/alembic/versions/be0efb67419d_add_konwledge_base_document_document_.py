@@ -57,13 +57,13 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['knowledge_base_id'], ['knowledge_bases.id'], ),
     sa.PrimaryKeyConstraint('id')
     )
-    op.drop_index(op.f('checkpoints_thread_id_idx'), table_name='checkpoints')
-    op.drop_table('checkpoints')
-    op.drop_index(op.f('checkpoint_writes_thread_id_idx'), table_name='checkpoint_writes')
-    op.drop_table('checkpoint_writes')
-    op.drop_table('checkpoint_migrations')
-    op.drop_index(op.f('checkpoint_blobs_thread_id_idx'), table_name='checkpoint_blobs')
-    op.drop_table('checkpoint_blobs')
+    op.execute('DROP INDEX IF EXISTS checkpoints_thread_id_idx')
+    op.execute('DROP TABLE IF EXISTS checkpoints')
+    op.execute('DROP INDEX IF EXISTS checkpoint_writes_thread_id_idx')
+    op.execute('DROP TABLE IF EXISTS checkpoint_writes')
+    op.execute('DROP TABLE IF EXISTS checkpoint_migrations')
+    op.execute('DROP INDEX IF EXISTS checkpoint_blobs_thread_id_idx')
+    op.execute('DROP TABLE IF EXISTS checkpoint_blobs')
     # ### end Alembic commands ###
 
 
